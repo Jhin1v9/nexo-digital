@@ -55,7 +55,7 @@ try {
 }
 
 const CDP_PORTS = config?.KIMI?.cdpPorts || [9222, 9223, 9224, 9225];
-const DEFAULT_TIMEOUT = parseInt(process.env.KIMI_TIMEOUT, 10) || config?.TIMEOUTS?.kimi || 120000;
+const DEFAULT_TIMEOUT = 1800000; // 30 minutes — was 120000
 const KIMI_MODE_URLS = config?.KIMI?.modeUrls || {
   instant: 'https://www.kimi.com/?chat_enter_method=new_chat&lang=en',
   thinking: 'https://www.kimi.com/?chat_enter_method=new_chat&lang=en',
@@ -835,6 +835,13 @@ class KimiBridge {
       } catch (e) {
         log.warn('[CRASH-RECOVERY] Auto-restart failed:', e.message);
       }
+      // v8.6-fix: Clear global state to prevent stale sessions
+      this.domEventQueues.clear();
+      this.streamStopFlags.clear();
+      this.cancelledStreams.clear();
+      this.networkInterceptors.forEach(i => i.stop());
+      this.networkInterceptors.clear();
+      log.info('[DEBUG-LUNA] Global state cleared after browser disconnect');
     });
 
     // Start idle cleanup timer
@@ -869,9 +876,10 @@ class KimiBridge {
     for (const [userId, ctx] of this.userContexts) {
       try {
         if (ctx && typeof ctx.close === 'function') {
+          log.info('[DEBUG-LUNA] Closing context with 30s timeout');
           await Promise.race([
             ctx.close(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
           ]);
           log.info(`Closed context for user ${hashUserId(userId)}`);
         }
@@ -886,9 +894,10 @@ class KimiBridge {
     if (this.browser) {
       try {
         if (typeof this.browser.disconnect === 'function') {
+          log.info('[DEBUG-LUNA] Disconnecting browser with 30s timeout');
           await Promise.race([
             this.browser.disconnect(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
           ]);
           log.info('Browser disconnected (CDP)');
         } else {
@@ -981,7 +990,8 @@ class KimiBridge {
       const currentUrl = await page.url().catch(() => '');
       if (!currentUrl.includes(chatUrl.split('?')[0].split('/').pop())) {
         log.info(`[CRASH-RECOVERY] Navigating to saved chat URL: ${chatUrl}`);
-        await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        log.info('[DEBUG-LUNA] Crash-recovery goto with no timeout');
+        await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 0 });
         await page.waitForTimeout(2000);
       }
 
@@ -1725,7 +1735,14 @@ class KimiBridge {
           const codeBlocks = md.querySelectorAll('.segment-code, pre code, [class*="code-block"]');
           for (const cb of codeBlocks) {
             const text = (cb.innerText || cb.textContent || '').trim();
-            if (text) rawResponse += text + '\n\n';
+            if (text) {
+              // v8.5-fix: skip tool call JSON blocks from being exposed as response text
+              if (text.startsWith('{') && text.includes('"tool"')) {
+                // This is a tool call block, not user-facing text
+              } else {
+                rawResponse += text + '\n\n';
+              }
+            }
           }
           const paragraphs = md.querySelectorAll('.paragraph, p, [class*="text"]');
           for (const p of paragraphs) {
@@ -1744,7 +1761,8 @@ class KimiBridge {
             if (item.querySelector('.toolcall-container.thinking-container')) continue;
             const codeBlocks = item.querySelectorAll('.segment-code, pre code, [class*="code-block"]');
             for (const cb of codeBlocks) {
-              const text = (cb.innerText || cb.textContent || '').trim();
+              // v9.5-fix: Use textContent FIRST for code blocks — innerText can be truncated
+              const text = (cb.textContent || cb.innerText || '').trim();
               if (text) rawResponse += text + '\n\n';
             }
             const paragraphs = item.querySelectorAll('.paragraph, p, [class*="text"]');
@@ -1866,6 +1884,7 @@ class KimiBridge {
    * Throws on timeout.
    */
   async _waitForResponse(page, mode = 'instant', onPartial = null, initialText = '', targetAssistantIndex = -1) {
+    log.info('[DEBUG-LUNA] _waitForResponse started');
     // NO TIMEOUT — Kimi may execute Python for 10+ minutes. That's valid activity.
     // We wait until buttons appear + text is stable, forever.
 
@@ -1880,7 +1899,7 @@ class KimiBridge {
           return markdown ? (markdown.innerText || '').trim() : '';
         }, targetAssistantIndex).catch(() => '');
       }
-      return await page.locator('.markdown-container .markdown').last().innerText({ timeout: 2000 }).catch(() => '');
+      return await page.locator('.markdown-container .markdown').last().innerText({ timeout: 0 }).catch(() => '');
     };
 
     // Phase 0: Wait for text to CHANGE from initialText — this ensures we don't
@@ -1963,6 +1982,7 @@ class KimiBridge {
               if (onPartial) {
                 try { onPartial(currentText, 'done'); } catch {}
               }
+              log.info('[DEBUG-LUNA] _waitForResponse finished successfully');
               return lastText;
             }
 
@@ -1986,6 +2006,7 @@ class KimiBridge {
     // Loop should never reach here — it returns when buttons+stable text detected.
     // Safety fallback: return last known text.
     log.warn(`_waitForResponse loop exited unexpectedly, returning lastText (${lastText.length} chars)`);
+    log.info('[DEBUG-LUNA] _waitForResponse finished (fallback)');
     return lastText;
   }
 
@@ -2191,15 +2212,17 @@ class KimiBridge {
       if (options.newChat) {
         await page.goto('https://www.kimi.com/?chat_enter_method=new_chat&lang=en', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(2000);
-        session.chatUrl = page.url();
-        this._saveChatUrl(userId, session.chatUrl);
+        if (session) {
+          session.chatUrl = page.url();
+          this._saveChatUrl(userId, session.chatUrl);
+        }
       }
 
       if (options.mode) {
         await this.setMode(userId, options.mode);
       }
 
-      const actualMode = await this._detectActualMode(page) || session.mode || 'instant';
+      const actualMode = await this._detectActualMode(page) || session?.mode || 'instant';
       log.info(`User ${hashUserId(userId)} sending image (text=${text ? 'yes' : 'no'}, mode=${actualMode})`);
 
       await page.bringToFront();
@@ -2349,15 +2372,17 @@ class KimiBridge {
       if (options.newChat) {
         await page.goto('https://www.kimi.com/?chat_enter_method=new_chat&lang=en', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(2000);
-        session.chatUrl = page.url();
-        this._saveChatUrl(userId, session.chatUrl);
+        if (session) {
+          session.chatUrl = page.url();
+          this._saveChatUrl(userId, session.chatUrl);
+        }
       }
 
       if (options.mode) {
         await this.setMode(userId, options.mode);
       }
 
-      const actualMode = await this._detectActualMode(page) || session.mode || 'instant';
+      const actualMode = await this._detectActualMode(page) || session?.mode || 'instant';
       log.info(`User ${hashUserId(userId)} sending file ${fileName} (text=${text ? 'yes' : 'no'}, mode=${actualMode})`);
 
       await page.bringToFront();
@@ -2744,9 +2769,10 @@ class KimiBridge {
     let lastText = '';
     let stableFor = 0;
     const pollInterval = 1000;
-    const maxWait = 120000;
+    const maxWait = Number.MAX_SAFE_INTEGER;
     const startTime = Date.now();
 
+    log.info('[DEBUG-LUNA] _waitForResponse started (no timeout)');
     while (Date.now() - startTime < maxWait) {
       await this._sleep(pollInterval);
 
@@ -2904,7 +2930,7 @@ class KimiBridge {
 
       // Capture current text BEFORE sending — critical to detect new response.
       // If captured after Enter, fast responses will be mistaken for old text.
-      const initialText = await page.locator('.markdown-container .markdown').last().innerText({ timeout: 2000 }).catch(() => '');
+      const initialText = await page.locator('.markdown-container .markdown').last().innerText({ timeout: 0 }).catch(() => '');
 
       // Clear any existing text first
       await inputLocator.fill('');
@@ -3553,12 +3579,13 @@ class KimiBridge {
       for (const [userId, session] of this.userSessions) {
         if (!session.page || session.page.isClosed()) continue;
         try {
-          // v8.7-fix: Keep page alive even when not visible.
-          // bringToFront prevents Chrome from throttling the tab.
-          // evaluate no-op keeps the renderer process active.
-          await session.page.bringToFront().catch(() => {});
+          // v9.5-fix: REMOVED bringToFront() — it was causing command bursts when user
+          // returned to the Kimi tab. Chrome already runs with anti-throttling flags:
+          // --disable-background-timer-throttling --disable-backgrounding-occluded-windows
+          // --disable-renderer-backgrounding. The evaluate no-op is enough to keep alive.
           await session.page.evaluate(() => {
             window.__lunaKeepAlive = Date.now();
+            // Small real DOM work that Chrome cannot optimize away
             const el = document.createElement('span');
             el.style.display = 'none';
             el.id = '__luna-keepalive-' + Date.now();
@@ -3569,8 +3596,8 @@ class KimiBridge {
           // Ignore errors — page may be navigating
         }
       }
-    }, 10000); // Every 10 seconds — more aggressive to prevent throttling
-    log.info('Background polling started (10s interval)');
+    }, 10000); // Every 10 seconds
+    log.info('Background polling started (10s interval, no bringToFront)');
   }
 
   /**
@@ -4313,20 +4340,23 @@ class KimiBridge {
    * v7.0: Stop the DOM poller for a user. Returns a Promise that resolves when stopped.
    */
   async _stopDomPoller(userId) {
+    log.info(`[DEBUG-LUNA] _stopDomPoller called for user ${hashUserId(userId)}`);
     const session = this.userSessions.get(userId);
     if (!session || !session.domPollerActive) return;
 
+    const wasActive = session.domPollerActive;
     session.domPollerActive = false;
     log.info(`[DomPoller] Stop requested for user ${hashUserId(userId)}`);
 
     // Wait for the poller loop to actually exit
-    if (session.domPollerActive) {
+    if (wasActive) {
       await new Promise(resolve => {
         session._domPollerStoppedResolve = resolve;
         // Safety: resolve after 2s even if poller didn't stop
         setTimeout(resolve, 2000);
       });
     }
+    log.info(`[DEBUG-LUNA] _stopDomPoller finished for user ${hashUserId(userId)}`);
   }
 
   /**
@@ -4516,6 +4546,9 @@ class KimiBridge {
       // Supports TWO DOM structures:
       //   OLD: .segment-content-box > .container-block > .block-item > ...
       //   NEW: .segment-content-box > .markdown-container > .markdown > .segment-code
+      // v10.0-fix: Filter out tool JSON code blocks from response text to prevent
+      // tool JSON from leaking into the chat. Detected tools are returned separately
+      // and enqueued as action_detected events by the caller.
       const structureBased = await page.evaluate(() => {
         const assistants = document.querySelectorAll('.segment-assistant');
         const lastAssistant = assistants[assistants.length - 1];
@@ -4523,6 +4556,27 @@ class KimiBridge {
 
         let thinking = '';
         let response = '';
+        const detectedTools = [];
+
+        // Helper: try to parse a code block as a tool JSON
+        function tryParseToolJson(text) {
+          if (!text || text.length < 10) return null;
+          // Quick reject: must contain "tool" key
+          if (!text.includes('"tool"')) return null;
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed.tool === 'string' && parsed.params && typeof parsed.params === 'object') {
+              return { tool: parsed.tool, params: parsed.params };
+            }
+            // Also accept flat structure {tool, path, content}
+            if (parsed && typeof parsed.tool === 'string' && (parsed.path || parsed.command || parsed.script || parsed.query)) {
+              return { tool: parsed.tool, params: parsed };
+            }
+          } catch (e) {
+            // Not valid JSON — not a tool
+          }
+          return null;
+        }
 
         // ── Extract thinking (anywhere inside assistant) ──
         const thinkContainer = lastAssistant.querySelector('.toolcall-container.thinking-container');
@@ -4549,8 +4603,18 @@ class KimiBridge {
 
           const codeBlocks = md.querySelectorAll('.segment-code, pre code, [class*="code-block"]');
           for (const cb of codeBlocks) {
-            const text = (cb.innerText || cb.textContent || '').trim();
-            if (text) rawResponse += text + '\n\n';
+            // v9.5-fix: Use textContent FIRST for code blocks — innerText can be truncated
+            // when the code block has scroll or lazy rendering. textContent returns all DOM text.
+            const text = (cb.textContent || cb.innerText || '').trim();
+            if (!text) continue;
+            // v10.0-fix: Check if this code block is a tool JSON. If so, extract it
+            // separately and do NOT include it in the response text.
+            const toolAction = tryParseToolJson(text);
+            if (toolAction) {
+              detectedTools.push(toolAction);
+              continue; // skip adding to rawResponse
+            }
+            rawResponse += text + '\n\n';
           }
           const paragraphs = md.querySelectorAll('.paragraph, p, [class*="text"]');
           for (const p of paragraphs) {
@@ -4571,8 +4635,16 @@ class KimiBridge {
 
             const codeBlocks = item.querySelectorAll('.segment-code, pre code, [class*="code-block"]');
             for (const cb of codeBlocks) {
-              const text = (cb.innerText || cb.textContent || '').trim();
-              if (text) rawResponse += text + '\n\n';
+              // v9.5-fix: Use textContent FIRST for code blocks — innerText can be truncated
+              const text = (cb.textContent || cb.innerText || '').trim();
+              if (!text) continue;
+              // v10.0-fix: Check if this code block is a tool JSON
+              const toolAction = tryParseToolJson(text);
+              if (toolAction) {
+                detectedTools.push(toolAction);
+                continue;
+              }
+              rawResponse += text + '\n\n';
             }
             const paragraphs = item.querySelectorAll('.paragraph, p, [class*="text"]');
             for (const p of paragraphs) {
@@ -4629,15 +4701,29 @@ class KimiBridge {
           }
         }
 
-        if (thinking || response) {
-          return { thinking, response: response.trim(), source: 'dom-structure' };
+        if (thinking || response || detectedTools.length > 0) {
+          return { thinking, response: response.trim(), detectedTools, source: 'dom-structure' };
         }
         return null;
       });
 
       if (structureBased) {
         const { canSteer, isGenerating } = await this._detectUiState(page);
-        log.info(`[_poll] dom-structure: thinking=${structureBased.thinking.length}, response=${structureBased.response.length}`);
+        // v10.0-fix: Enqueue detected tools as action_detected events so they are
+        // processed separately from the response text.
+        if (structureBased.detectedTools && structureBased.detectedTools.length > 0 && userId) {
+          const queue = this.domEventQueues.get(userId);
+          if (queue) {
+            for (const toolAction of structureBased.detectedTools) {
+              queue.events.push({
+                type: 'action_detected',
+                action: toolAction,
+                source: 'dom_structure_tool_filter',
+              });
+            }
+          }
+        }
+        log.info(`[_poll] dom-structure: thinking=${structureBased.thinking.length}, response=${structureBased.response.length}, tools=${(structureBased.detectedTools || []).length}`);
         return { ...structureBased, canSteer, isGenerating };
       }
       log.info(`[_poll] dom-structure: NOT FOUND`);
@@ -5651,15 +5737,22 @@ class KimiBridge {
    * Pattern inspired by ShellAgent's Provider.chat() async generator.
    */
   async *sendMessageStream(userId, text, options = {}) {
+    log.info(`[DEBUG-LUNA] sendMessageStream started for user ${hashUserId(userId)}`);
     if (!text || !text.trim()) {
       throw new Error('Message text is required');
+    }
+
+    // v8.6-fix: Reset completion state and soft-cancel flag at start of every message
+    const session = this.userSessions.get(userId);
+    if (session) {
+      session._completionState = null;
+      session.softCancelRequested = false;
     }
 
     // Rate limiting
     this._checkCooldown(userId);
 
     const page = await this._getOrCreateUserPage(userId);
-    const session = this.userSessions.get(userId);
 
     // v7.5: Initialize Network Interceptor for this message
     // This replaces fragile JS injection with native Playwright response capture.
@@ -5682,19 +5775,19 @@ class KimiBridge {
     // v7.0-fix: Wait for any ongoing processing. Unlike v6.x, we don't throw
     // STREAM_CANCELLED here — we wait for the previous stream to drain its
     // events or for the soft-cancel signal to propagate.
-    if (session.processing) {
-      log.warn(`User ${hashUserId(userId)} already processing — waiting for drain`);
-      const startWait = Date.now();
-      while (session.processing) {
-        if (Date.now() - startWait > 60000) {
-          throw new Error('Timeout waiting for previous message');
-        }
+    // v9.5-fix: Guard against undefined session (userSessions may not have entry yet)
+    if (session?.processing) {
+      log.warn(`[DEBUG-LUNA] User ${hashUserId(userId)} already processing — waiting for drain (no timeout)`);
+      while (session?.processing) {
         await new Promise(r => setTimeout(r, 500));
       }
+      log.warn(`[DEBUG-LUNA] Previous drain complete for user ${hashUserId(userId)}`);
     }
 
-    session.processing = true;
-    session.lastActivity = Date.now();
+    if (session) {
+      session.processing = true;
+      session.lastActivity = Date.now();
+    }
     this.cancelledStreams.delete(userId);
     this.streamStopFlags.delete(userId);
 
@@ -5712,15 +5805,17 @@ class KimiBridge {
       if (options.newChat) {
         await page.goto('https://www.kimi.com/?chat_enter_method=new_chat&lang=en', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(2000);
-        session.chatUrl = page.url();
-        this._saveChatUrl(userId, session.chatUrl);
+        if (session) {
+          session.chatUrl = page.url();
+          this._saveChatUrl(userId, session.chatUrl);
+        }
       }
 
       if (options.mode) {
         await this.setMode(userId, options.mode);
       }
 
-      const actualMode = await this._detectActualMode(page) || session.mode || 'instant';
+      const actualMode = await this._detectActualMode(page) || session?.mode || 'instant';
       log.info(`[v7.0] User ${hashUserId(userId)} streaming message (mode=${actualMode})`);
 
       // v6.1-fix: Inject text file contents directly into the prompt
@@ -5758,6 +5853,9 @@ class KimiBridge {
       }
 
       await page.bringToFront();
+      // v9.6-fix: Use a real timeout (not 0) so innerText throws when no markdown
+      // exists on Kimi's home screen, allowing .catch to return '' instead of
+      // hanging forever waiting for an element that never appears.
       const initialText = await page.locator('.markdown-container .markdown').last().innerText({ timeout: 2000 }).catch(() => '');
 
       // v7.7-INFALÍVEL: Capture FULL snapshot before sending (all assistant texts)
@@ -5898,7 +5996,7 @@ class KimiBridge {
         // We stop Kimi generation but keep draining the queue until:
         //   a) No more new events AND Kimi stopped generating, OR
         //   b) Drain timeout reached
-        if (session.softCancelRequested) {
+        if (session?.softCancelRequested) {
           if (!softCancelDrainStart) {
             softCancelDrainStart = Date.now();
             log.info(`[sendMessageStream] Soft-cancel drain started for user ${hashUserId(userId)}`);
@@ -5949,7 +6047,7 @@ class KimiBridge {
                 let delta = r.slice(lastResponse.length);
                 if (delta) {
                   // v9.4-fix: JSON Accumulation Buffer
-                  // If we're inside a JSON wrapper, accumulate until complete
+                  // Once accumulating, ALL chunks go to the buffer — never emit as response_delta
                   if (isAccumulatingJson) {
                     jsonAccumulator += delta;
                     if (isJsonComplete(jsonAccumulator)) {
@@ -6142,8 +6240,11 @@ class KimiBridge {
 
       log.info(`[sendMessageStream] finalResponse=${finalResponse.length} domActions=${domActionsCount}`);
 
-      session.chatUrl = page.url();
-      this._saveChatUrl(userId, session.chatUrl);
+      // v9.6-fix: Guard against undefined session (userSessions may not have entry yet)
+      if (session) {
+        session.chatUrl = page.url();
+        this._saveChatUrl(userId, session.chatUrl);
+      }
 
       const parsedText = this._extractParsedText(finalResponse);
       if (parsedText && parsedText !== finalResponse) {
@@ -6175,6 +6276,7 @@ class KimiBridge {
       } else {
         yield { type: 'done', response: finalResponse, thinking: lastThinking };
       }
+      log.info(`[DEBUG-LUNA] sendMessageStream finished for user ${hashUserId(userId)}`);
 
     } catch (err) {
       if (err.message === 'STREAM_CANCELLED') {
@@ -6184,9 +6286,11 @@ class KimiBridge {
         throw err;
       }
     } finally {
-      session.processing = false;
-      session.softCancelRequested = false; // v7.0: clear soft cancel flag
-      session.lastActivity = Date.now();
+      if (session) {
+        session.processing = false;
+        session.softCancelRequested = false; // v7.0: clear soft cancel flag
+        session.lastActivity = Date.now();
+      }
       this.cancelledStreams.delete(userId);
       this.streamStopFlags.delete(userId);
       // v7.0: NÃO paramos o DOM poller aqui — ele continua rodando independentemente
@@ -6420,7 +6524,7 @@ class KimiBridge {
         }
       });
       // Capture initial text BEFORE sending — critical for fast responses
-      const initialText = await page.locator('.markdown-container .markdown').last().innerText({ timeout: 2000 }).catch(() => '');
+      const initialText = await page.locator('.markdown-container .markdown').last().innerText({ timeout: 0 }).catch(() => '');
 
       await page.waitForTimeout(500);
       await inputLocator.press('Enter');

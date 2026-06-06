@@ -87,6 +87,7 @@
   function onClear()      { dispatch('clear'); }
   function onExport()     { dispatch('export'); }
   function onToggleSidebar() { dispatch('toggleSidebar'); }
+  function onGoHome()     { dispatch('goHome'); }
 </script>
 
 <svelte:window on:click={handleClickOutside} />
@@ -105,7 +106,13 @@
 
   <!-- LEFT: Brand + Title -->
   <div class="header-left">
-    <!-- No sidebar toggle in header — handled by App layout -->
+    <!-- Moon dots — clickable to go home -->
+    <button class="moon-dots" on:click={onGoHome} title="Ir para Home">
+      <span class="moon-dot md-1"></span>
+      <span class="moon-dot md-2"></span>
+      <span class="moon-dot md-3"></span>
+      <span class="moon-dot md-4"></span>
+    </button>
 
     <!-- Luna Avatar -->
     <div class="avatar-ring" style="--avatar-glow: {theme.glow}">
@@ -118,11 +125,11 @@
 
     <!-- Title block -->
     <div class="title-block">
-      <h1 class="chat-title" title={title} on:click={() => dispatch('editTitle')}>
+      <h1 class="chat-title luna-moon-title" title={title} on:click={() => dispatch('editTitle')}>
         {#if title && title !== 'Nova Conversa'}
           {title.length > 35 ? title.slice(0, 35) + '…' : title}
         {:else}
-          Luna
+          LUNA
         {/if}
       </h1>
       <div class="status-row">
@@ -279,6 +286,55 @@
     gap: 0.625rem;
     flex-shrink: 0;
     min-width: 0;
+  }
+
+  /* Moon dots — clickable home nav */
+  .moon-dots {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 8px;
+    transition: background 0.2s ease;
+  }
+  .moon-dots:hover {
+    background: rgba(255,255,255,0.05);
+  }
+  .moon-dots:hover .moon-dot {
+    filter: brightness(1.3) drop-shadow(0 0 6px rgba(226,232,240,0.6));
+  }
+  .moon-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #e2e8f0 0%, #94a3b8 100%);
+    box-shadow: 0 0 4px rgba(226,232,240,0.3);
+    transition: all 0.3s ease;
+  }
+  .md-1 { opacity: 0.4; transform: scale(0.6); }
+  .md-2 { opacity: 0.7; transform: scale(0.8); }
+  .md-3 { opacity: 1.0; transform: scale(1.0); box-shadow: 0 0 8px rgba(226,232,240,0.5); }
+  .md-4 { opacity: 0.7; transform: scale(0.8); }
+  @keyframes moonDotFloat {
+    0%, 100% { transform: translateY(0) scale(var(--s, 1)); }
+    50% { transform: translateY(-3px) scale(var(--s, 1)); }
+  }
+  .md-1 { animation: moonDotFloat 3s ease-in-out infinite; --s: 0.6; }
+  .md-2 { animation: moonDotFloat 3s ease-in-out infinite 0.5s; --s: 0.8; }
+  .md-3 { animation: moonDotFloat 3s ease-in-out infinite 1s; --s: 1.0; }
+  .md-4 { animation: moonDotFloat 3s ease-in-out infinite 1.5s; --s: 0.8; }
+
+  /* Luna title moon styling */
+  .luna-moon-title {
+    background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 40%, #94a3b8 70%, #e2e8f0 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 0 8px rgba(226, 232, 240, 0.35));
+    letter-spacing: 2px;
   }
 
   .sidebar-toggle {

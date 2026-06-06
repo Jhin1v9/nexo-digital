@@ -33,6 +33,9 @@ const {
   runBuildCheck,
   checkIndexHtml,
   validateProject,
+  syntaxGuard,
+  typeScriptValidate,
+  autoFix,
 } = require('./luna-code-validator.cjs');
 const readline = require('readline');
 
@@ -690,7 +693,11 @@ function isJsonResponseComplete(text) {
 }
 
 function isIncompleteResponse(text) {
-  if (!text || text.length < 20) return false;
+  if (!text) return false;
+  // v9.5-fix: If text is very short and looks like a broken JSON start (has '{' but no '}'),
+  // it's probably truncated by the DOM reader. Force continue.
+  if (text.length < 50 && text.includes('{') && !text.includes('}')) return true;
+  if (text.length < 20) return false;
   if (isJsonResponseComplete(text)) return false;
   const t = text.trim();
 
@@ -1380,31 +1387,34 @@ class LunaSoul extends EventEmitter {
     this.lunaGit = null;
     this.toolGuard = null; // lazy init quando workspace é setado
     this.projectValidator = new ProjectHealthValidator();
-    // v8.4-fix: Global action execution cache per session to prevent duplicate tool execution
+    // v9.5-fix: Global action execution cache per session to prevent duplicate tool execution
     // across retries, auto-continues, and bridge reconnects.
-    this._executedActionCache = new Map(); // sessionId -> Map<toolHash, timestamp>
+    // NOW stores {timestamp, result} so skipped actions can return the previous result.
+    this._executedActionCache = new Map(); // sessionId -> Map<toolHash, {timestamp, result}>
   }
 
-  // v8.4-fix: Check if an action was already executed recently (within 5 minutes)
-  _wasActionRecentlyExecuted(sessionId, toolHash) {
+  // v9.5-fix: Check if an action was already executed recently.
+  // Returns the stored result object if found and not expired, otherwise null.
+  _getRecentActionResult(sessionId, toolHash) {
     const sessionCache = this._executedActionCache.get(sessionId);
-    if (!sessionCache) return false;
-    const ts = sessionCache.get(toolHash);
-    if (!ts) return false;
-    // Expire entries older than 30 seconds — enough to prevent loops, short enough to retry
-    if (Date.now() - ts > 30 * 1000) {
+    if (!sessionCache) return null;
+    const entry = sessionCache.get(toolHash);
+    if (!entry) return null;
+    // Expire entries older than 60 seconds — long enough to prevent loops,
+    // short enough to allow legitimate re-execution after a while.
+    if (Date.now() - entry.timestamp > 60 * 1000) {
       sessionCache.delete(toolHash);
-      return false;
+      return null;
     }
-    return true;
+    return entry.result;
   }
 
-  // v8.4-fix: Mark an action as executed
-  _markActionExecuted(sessionId, toolHash) {
+  // v9.5-fix: Mark an action as executed, storing its result for potential replay
+  _markActionExecuted(sessionId, toolHash, result) {
     if (!this._executedActionCache.has(sessionId)) {
       this._executedActionCache.set(sessionId, new Map());
     }
-    this._executedActionCache.get(sessionId).set(toolHash, Date.now());
+    this._executedActionCache.get(sessionId).set(toolHash, { timestamp: Date.now(), result });
   }
 
   /** Initialize git for workspace if available */
@@ -1511,9 +1521,16 @@ class LunaSoul extends EventEmitter {
    * Triggers when: event count > threshold OR explicit flag.
    */
   _shouldCompact(sessionId, explicit = false) {
-    // v5.6-fix: AUTO-COMPACT DESATIVADO. Nunca compacta automaticamente.
-    // O usuário decide quando criar nova thread. Apenas forceCompact explícito funciona.
-    return explicit === true;
+    if (explicit === true) {
+      console.log(`[DEBUG-LUNA] _shouldCompact returning true (explicit)`);
+      return true;
+    }
+    const eventCount = this.sessionManager?.getEventCount?.(sessionId)
+      || this.sessionManager?.readContext?.(sessionId)?.length
+      || 0;
+    const should = eventCount > 100;
+    console.log(`[DEBUG-LUNA] _shouldCompact returning ${should} (eventCount=${eventCount})`);
+    return should;
   }
 
   /**
@@ -1521,6 +1538,7 @@ class LunaSoul extends EventEmitter {
    * Yields progress events for the TUI.
    */
   async *_autoCompact(sessionId, userId = 'luna-default') {
+    console.log(`[DEBUG-LUNA] _autoCompact started for session ${sessionId}`);
     yield { type: 'compact_start', message: '📦 Contexto grande demais. Compactando...', sessionId };
 
     try {
@@ -1537,8 +1555,10 @@ class LunaSoul extends EventEmitter {
         yield { type: 'compact_progress', message: '🔄 Criando nova thread no Kimi Web...', sessionId };
         try {
           await this.kimiBridge.newChat(userId);
+          console.log(`[LUNA] New chat created for user ${userId}`);
         } catch (err) {
           yield { type: 'compact_error', message: `❌ Falha ao criar nova thread: ${err.message}. Contexto preservado.`, sessionId };
+          console.log(`[DEBUG-LUNA] _autoCompact finished (newChat failed)`);
           return { success: false, error: err.message };
         }
       }
@@ -1555,8 +1575,10 @@ class LunaSoul extends EventEmitter {
       });
 
       yield { type: 'compact_end', message: '✅ Contexto compactado. Nova thread pronta.', summary, sessionId };
+      console.log(`[DEBUG-LUNA] _autoCompact finished (success)`);
       return { success: true, summary };
     } catch (err) {
+      console.error(`[DEBUG-LUNA] _autoCompact finished (error): ${err.message}`);
       yield { type: 'compact_error', message: `❌ Erro na compactação: ${err.message}`, sessionId };
       return { success: false, error: err.message };
     }
@@ -1958,8 +1980,14 @@ class LunaSoul extends EventEmitter {
               // v7.6-fix: Deduplication by both code hash AND tool+params hash.
               // This prevents loops when Kimi generates the same tool call with
               // slightly different formatting (e.g., extra whitespace, different quotes).
+              // v8.5-fix: normalize flat JSON params into event.action.params
+              if (event.action?.tool && !event.action?.params) {
+                const { tool, type, ...rest } = event.action;
+                event.action.params = Object.keys(rest).length > 0 ? rest : {};
+              }
               const toolKey = `${event.action?.tool || event.action?.type || 'unknown'}:${JSON.stringify(event.action?.params || event.action || {})}`;
               const toolHash = require('crypto').createHash('sha256').update(toolKey).digest('hex').slice(0, 16);
+              console.log(`[DEBUG-LUNA] DOM dedup hash calculated: toolKey=${toolKey}, toolHash=${toolHash}`);
 
               const parsedAction = {
                 mode: 'ACTION',
@@ -2009,10 +2037,10 @@ class LunaSoul extends EventEmitter {
                 actionResult = { success: false, error: actionErr.message, tool: parsedAction.tool };
               }
 
+              // v9.5-fix: Store result in cache so skipped duplicates can replay it.
               // v8.7-fix: ONLY mark as executed AFTER successful execution.
-              // If execution failed, allow retry on next loop iteration.
               if (actionResult?.success) {
-                this._markActionExecuted(sessionId, toolHash);
+                this._markActionExecuted(sessionId, toolHash, actionResult);
               }
 
               yield { type: 'action_end', tool: parsedAction.tool, result: actionResult, source: event.source || 'dom_mirror', sessionId };
@@ -2061,7 +2089,7 @@ class LunaSoul extends EventEmitter {
               const stderr = innerResult?.stderr || '';
               const successMark = dar.result?.success ? '✅' : '❌';
               const msg = innerResult?.message || innerResult?.friendlyMessage || '';
-              if (!stdout && !msg) stdout = JSON.stringify(innerResult);
+              if (!stdout && !msg) stdout = '[Resultado não possui saída legível]';
               outputText += `\n\n[LUNA-MIRROR] ${successMark} ${dar.tool} executado no PC local:`;
               if (msg) outputText += `\n--- message ---\n${msg}`;
               if (stdout) outputText += `\n--- stdout ---\n${stdout}`;
@@ -2116,7 +2144,7 @@ class LunaSoul extends EventEmitter {
               const innerResult = dar.result?.result;
               let out = innerResult?.stdout || innerResult?.output || innerResult?.text || '';
               const msg = innerResult?.message || innerResult?.friendlyMessage || '';
-              if (!out && !msg) out = JSON.stringify(innerResult);
+              if (!out && !msg) out = '[Resultado não possui saída legível]';
               toolSummary += `\n- ${dar.tool}: ${msg || out.slice(0, 200)}`;
             }
             autoContinueText = `[AUTO-CONTINUE AFTER CRASH] Chrome was restarted. The following tools were executed before the crash:\n${toolSummary}\n\nPlease continue from where you left off. Do NOT re-execute the same tools with the same parameters. Use the results above and proceed with the next step.`;
@@ -2146,13 +2174,15 @@ class LunaSoul extends EventEmitter {
       // v5.8-fix: Context limit detectado pelo texto da resposta. Auto-compact + new thread.
       if (/getting too long|conversation.*too long|try starting a new session|context limit|token limit|聊得太长|发起一个新会话|会话太长/i.test(fullResponse)) {
         yield { type: 'system', message: '📦 Limite de contexto atingido. Compactando e criando nova thread...', sessionId };
-        const compactResult = yield* this._autoCompact(sessionId, userId);
-        if (compactResult.success) {
-          loopContext = await this._buildContext(sessionId, loopInput, { ...options, isFirstMessage: false });
-          continue;
-        } else {
-          yield { type: 'error', error: '❌ Falha ao compactar contexto: ' + compactResult.error, sessionId };
-          return;
+        try {
+          const compactResult = yield* this._autoCompact(sessionId, userId);
+          if (compactResult.success) {
+            loopContext = await this._buildContext(sessionId, loopInput, { ...options, isFirstMessage: false });
+            continue;
+          }
+        } catch (compactErr) {
+          console.error('[LUNA] Auto-compact failed:', compactErr.message);
+          yield { type: 'context_limit', error: 'Falha ao compactar contexto: ' + compactErr.message, sessionId };
         }
       }
 
@@ -2212,7 +2242,7 @@ class LunaSoul extends EventEmitter {
             // If there's a friendly message (e.g., validation errors), include it prominently
             const msg = innerResult?.message || innerResult?.friendlyMessage || '';
             if (!stdout && !msg) {
-              stdout = JSON.stringify(innerResult);
+              stdout = '[Resultado não possui saída legível]';
             }
             outputText += `\n\n[LUNA-MIRROR] ${successMark} ${dar.tool} executado no PC local:`;
             if (msg) outputText += `\n--- message ---\n${msg}`;
@@ -2236,6 +2266,12 @@ class LunaSoul extends EventEmitter {
             `Use grep/searchFiles/readFile para buscar informações específicas se necessário.]`;
         }
 
+        // v10.0-fix: Detecta se algum resultado precisa de correção (validationErrors/buildErrors)
+        const needsFix = result.needsFix || domActionResults.some(d => d.result?.needsFix);
+        const fixInstructions = needsFix
+          ? `\n\n🚨 CORREÇÃO NECESSÁRIA:\nO arquivo que você criou contém erros de validação/build listados acima.\nVocê DEVE corrigir o arquivo usando writeFile com o CONTEÚDO CORRIGIDO.\nNÃO envie "response" — envie a ferramenta writeFile com a versão corrigida.\n`
+          : '';
+
         loopInput = `✅ FERRAMENTA EXECUTADA — ${toolsUsed}
 
 🎯 O QUE ACONTECEU:
@@ -2246,7 +2282,7 @@ Este é o resultado REAL.
 📊 STATUS: ${successCount}/${totalCount} sucesso(s)
 
 📝 RESULTADO:
-${outputText}
+${outputText}${fixInstructions}
 
 ➡️ SUA VEZ — OBRIGATÓRIO:
 Responda AGORA com um JSON de RESPOSTA, NÃO reenvie a mesma ferramenta:
@@ -2567,7 +2603,7 @@ QUANDO TERMINAR DE INVESTIGAR, escreva o plano em markdown:
       }
 
       default:
-        yield this._handleChat({ response: `Modo desconhecido: ${mode}. Resposta: ${JSON.stringify(parsed)}` }, sessionId);
+        yield this._handleChat({ response: `Modo desconhecido: ${mode}. Tool: ${parsed.tool || 'unknown'}` }, sessionId);
     }
   }
 
@@ -2576,6 +2612,7 @@ QUANDO TERMINAR DE INVESTIGAR, escreva o plano em markdown:
    * Returns { events: [], output: string, tool: string } for auto-continue loop.
    */
   async _processModeResult(parsed, sessionId, originalInput, options) {
+    console.log(`[DEBUG-LUNA] _processModeResult started mode=${parsed.mode || 'CHAT'}`);
     const mode = parsed.mode || 'CHAT';
     const events = [];
     let output = '';
@@ -2592,16 +2629,29 @@ QUANDO TERMINAR DE INVESTIGAR, escreva o plano em markdown:
       case 'ACTION': {
         tool = parsed.tool || '';
         // v8.4-fix: Check global session cache to prevent re-execution across retries/reconnects
+        // v8.5-fix: normalize flat JSON params into parsed.params
+        if (parsed.tool && !parsed.params) {
+          const { tool, mode, response, ...rest } = parsed;
+          parsed.params = Object.keys(rest).length > 0 ? rest : {};
+        }
         const _toolKey = `${parsed.tool || 'unknown'}:${JSON.stringify(parsed.params || {})}`;
         const _toolHash = require('crypto').createHash('sha256').update(_toolKey).digest('hex').slice(0, 16);
-        if (this._wasActionRecentlyExecuted(sessionId, _toolHash)) {
-          console.log(`[v8.4] Skipping recently executed ACTION: ${parsed.tool}`);
-          events.push({ type: 'action_skipped', tool: parsed.tool, reason: 'recently_executed', sessionId });
+        console.log(`[DEBUG-LUNA] dedup hash calculated: _toolKey=${_toolKey}, _toolHash=${_toolHash}`);
+
+        // v9.5-fix: Check for recently executed action. If found, replay the stored result
+        // instead of skipping silently — this prevents infinite loops where Kimi re-sends
+        // the same tool because it never received the result.
+        const cachedResult = this._getRecentActionResult(sessionId, _toolHash);
+        if (cachedResult) {
+          console.log(`[v9.5] Replaying recently executed ACTION result: ${parsed.tool}`);
+          events.push({ type: 'action_start', tool: parsed.tool, params: parsed.params, sessionId });
+          events.push({ type: 'action_end', tool: parsed.tool, result: cachedResult, sessionId });
+          const actionOutput = cachedResult.result?.friendlyMessage || cachedResult.result?.stdout || cachedResult.result?.output || cachedResult.result?.text || '[Resultado da ferramenta não possui saída legível]';
+          output = actionOutput;
           break;
         }
 
         // v8.6-fix: CRITICAL — Save the tool JSON to session history so Kimi sees her own action on the next loop.
-        // This mirrors the streaming path (action_detected handler) which does the same.
         const toolJson = JSON.stringify({ tool: parsed.tool, params: parsed.params });
         this.sessionManager.appendEvent(sessionId, {
           type: 'assistant',
@@ -2624,15 +2674,25 @@ QUANDO TERMINAR DE INVESTIGAR, escreva o plano em markdown:
           actionResult = { success: false, error: actionErr.message, tool: parsed.tool };
         }
 
-        // v8.7-fix: ONLY mark as executed AFTER successful execution.
+        // v9.5-fix: Store result in cache so skipped duplicates can replay it.
         if (actionResult?.success) {
-          this._markActionExecuted(sessionId, _toolHash);
+          this._markActionExecuted(sessionId, _toolHash, actionResult);
         }
 
         events.push({ type: 'action_end', tool: parsed.tool, result: actionResult, sessionId });
         // Append action output to response output
         // v8.5-fix: Prioritize friendlyMessage (human-readable) over raw JSON
-        const actionOutput = actionResult.result?.friendlyMessage || actionResult.result?.stdout || actionResult.result?.output || actionResult.result?.text || JSON.stringify(actionResult.result);
+        // v10.0-fix: Include validation message when needsFix is true
+        if (!actionResult.result?.friendlyMessage && !actionResult.result?.stdout && !actionResult.result?.output && !actionResult.result?.text && !actionResult.result?.message) {
+          console.log('[LUNA] Tool raw result (debug):', JSON.stringify(actionResult.result).slice(0, 500));
+        }
+        let actionOutput;
+        if (actionResult.result?.needsFix && actionResult.result?.message) {
+          // Validation errors take priority — Kimi MUST see them
+          actionOutput = actionResult.result.message;
+        } else {
+          actionOutput = actionResult.result?.friendlyMessage || actionResult.result?.stdout || actionResult.result?.output || actionResult.result?.text || '[Resultado da ferramenta não possui saída legível]';
+        }
         output = output ? `${output}\n\n${actionOutput}` : actionOutput;
         break;
       }
@@ -2670,6 +2730,14 @@ QUANDO TERMINAR DE INVESTIGAR, escreva o plano em markdown:
           if (!stepResult.success) {
             events.push({ type: 'plan_error', stepIndex: i, error: stepResult.error, sessionId });
             output = `Falha no passo ${i + 1}: ${stepResult.error}`;
+            break;
+          }
+          // v10.0-fix: Stop plan if a step has validation errors (needsFix)
+          // This prevents the plan from continuing with broken code.
+          if (stepResult.result?.needsFix) {
+            const fixMsg = stepResult.result?.message || `Erros de validação no passo ${i + 1}`;
+            events.push({ type: 'plan_error', stepIndex: i, error: fixMsg, sessionId });
+            output = `🚨 PLAN INTERROMPIDO — Passo ${i + 1} precisa de correção:\n${fixMsg}\n\nCorrija o arquivo acima antes de continuar com os demais passos.`;
             break;
           }
           await new Promise(r => setTimeout(r, 500));
@@ -2722,9 +2790,10 @@ QUANDO TERMINAR DE INVESTIGAR, escreva o plano em markdown:
       }
 
       default:
-        events.push(this._handleChat({ response: `Modo desconhecido: ${mode}. Resposta: ${JSON.stringify(parsed)}` }, sessionId));
+        events.push(this._handleChat({ response: `Modo desconhecido: ${mode}. Tool: ${parsed.tool || 'unknown'}` }, sessionId));
     }
 
+    console.log(`[DEBUG-LUNA] _processModeResult finished mode=${mode} events=${events.length}`);
     return { events, output, tool };
   }
 
@@ -2951,7 +3020,7 @@ FERRAMENTAS: readFile, writeFile, replaceInFile, executeShell, searchFiles, grep
 
       default:
         // Unknown mode — treat as chat
-        return this._handleChat({ response: `Modo desconhecido: ${mode}. Resposta: ${JSON.stringify(parsed)}` }, sessionId);
+        return this._handleChat({ response: `Modo desconhecido: ${mode}. Tool: ${parsed.tool || 'unknown'}` }, sessionId);
     }
   }
 
@@ -3380,25 +3449,66 @@ FERRAMENTAS: readFile, writeFile, replaceInFile, executeShell, searchFiles, grep
             const writtenPath = p.path || p.filePath;
             if (writtenPath && fs.existsSync(writtenPath)) {
               const ext = path.extname(writtenPath);
-              const content = fs.readFileSync(writtenPath, 'utf8');
+              let content = fs.readFileSync(writtenPath, 'utf8');
               const validationErrors = [];
 
-              // 1. Truncation check
+              // 0. AUTO FIX — corrige erros óbvios automaticamente (<<Type>, etc)
+              // Isso acelera o fluxo: erros triviais são corrigidos sem esperar Kimi
+              const autoFixResult = autoFix(content, ext);
+              if (autoFixResult.changed) {
+                // Re-escreve o arquivo com a correção
+                fs.writeFileSync(writtenPath, autoFixResult.fixed, 'utf8');
+                content = autoFixResult.fixed; // usa conteúdo corrigido nas próximas validações
+                // Adiciona ao resultado para Kimi saber o que foi corrigido
+                const fixText = `🔧 Auto-fix aplicado em ${path.basename(writtenPath)}:\n${autoFixResult.fixes.map(f => `  - ${f}`).join('\n')}`;
+                result.message = (result.message || '') + '\n\n' + fixText;
+              }
+
+              // 1. SyntaxGuard — erros óbvios de digitação (<<Type>, >>, }})
+              const syntax = syntaxGuard(content, ext);
+              if (!syntax.passed) validationErrors.push(...syntax.errors);
+
+              // 2. Truncation check
               const trunc = checkFileTruncated(content, ext);
               if (trunc.truncated) validationErrors.push(...trunc.errors);
 
-              // 2. JSX balance check
+              // 3. JSX balance check
               if (ext === '.jsx' || ext === '.tsx') {
                 const jsx = checkJsxBalanced(content);
                 if (!jsx.balanced) validationErrors.push(...jsx.errors);
               }
 
+              // 4. TypeScript validation (.ts / .tsx)
+              if (ext === '.ts' || ext === '.tsx') {
+                const ts = typeScriptValidate(writtenPath);
+                if (!ts.passed) {
+                  validationErrors.push(`TypeScript errors in ${path.basename(writtenPath)}:`);
+                  validationErrors.push(...ts.errors.map(e => `  ${e}`));
+                }
+              }
+
               if (validationErrors.length > 0) {
                 const errorText = `⚠️ VALIDAÇÃO IMEDIATA DO ARQUIVO (${path.basename(writtenPath)}):\n${validationErrors.map(e => `  - ${e}`).join('\n')}\n\nO arquivo foi escrito mas contém erros. Por favor, corrija e reescreva o arquivo.`;
                 result.validationErrors = validationErrors;
+                result.needsFix = true;
                 result.message = (result.message || '') + '\n\n' + errorText;
                 // Não marcamos como falha (success continua true) para não quebrar o fluxo,
                 // mas a Kimi Web vê os erros na mensagem e pode corrigir.
+              }
+
+              // ── BuildValidator — testa build do projeto após writeFile ──
+              // Só roda se não houver erros de validação (evita build de código quebrado)
+              if (!result.needsFix) {
+                const projectDir = this._findProjectRoot(path.dirname(path.resolve(writtenPath)));
+                if (projectDir && fs.existsSync(path.join(projectDir, 'package.json'))) {
+                  const build = runBuildCheck(projectDir);
+                  if (!build.ok) {
+                    const buildErrorText = `⚠️ BUILD FALHOU (${path.basename(projectDir)}):\n${build.errors.map(e => `  - ${e}`).join('\n')}\n\nO arquivo foi escrito mas o projeto não compila. Corrija o erro e reescreva o arquivo.`;
+                    result.buildErrors = build.errors;
+                    result.needsFix = true;
+                    result.message = (result.message || '') + '\n\n' + buildErrorText;
+                  }
+                }
               }
             }
           }
@@ -3456,7 +3566,7 @@ FERRAMENTAS: readFile, writeFile, replaceInFile, executeShell, searchFiles, grep
               const shellCmd = `python3 <<'${heredocDelim}'\n${code}\n${heredocDelim}`;
               // v5.3: Destructive shell pattern check REMOVED — DONO ABSOLUTO.
               if (!result) {
-                const shellFn = () => lunaTools.executeShell(shellCmd, { timeout: 30 }, emitProgress);
+                const shellFn = () => lunaTools.executeShell(shellCmd, { timeout: 300 }, emitProgress);
                 if (guard) {
                   result = await guard.execute('executeShell', { command: shellCmd }, shellFn);
                 } else {
@@ -3534,7 +3644,10 @@ FERRAMENTAS: readFile, writeFile, replaceInFile, executeShell, searchFiles, grep
     // FIX: Empty output (result.output === '') is falsy and was skipped.
     // Use explicit checks so empty strings are preserved and reported back to the LLM.
     // v8.5-fix: Prioritize friendlyMessage (human-readable) over raw JSON
-    const rawOutput = (result.friendlyMessage !== undefined ? result.friendlyMessage : result.content !== undefined ? result.content : result.stdout !== undefined ? result.stdout : result.output !== undefined ? result.output : JSON.stringify(result)).slice(0, 2000);
+    if (result.friendlyMessage === undefined && result.content === undefined && result.stdout === undefined && result.output === undefined) {
+      console.log('[LUNA] Storage fallback raw result (debug):', JSON.stringify(result).slice(0, 500));
+    }
+    const rawOutput = (result.friendlyMessage !== undefined ? result.friendlyMessage : result.content !== undefined ? result.content : result.stdout !== undefined ? result.stdout : result.output !== undefined ? result.output : '[Resultado da ferramenta não possui saída legível]').slice(0, 2000);
     const outputText = this._scrubSecrets(rawOutput);
     if (result.error) result.error = this._scrubSecrets(result.error);
     if (result.stdout) result.stdout = this._scrubSecrets(result.stdout);

@@ -1,0 +1,31 @@
+{
+  "name": "nexo-digital",
+  "version": "1.0.0",
+  "description": "NEXO Dashboard PRO + Luna Kernel v5.0 — Universal Installer",
+  "private": true,
+  "workspaces": [
+    "dashboard",
+    "luna-kernel"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm run install:dashboard && npm run install:kernel",
+    "install:dashboard": "cd dashboard && npm install",
+    "install:kernel": "cd luna-kernel && npm install",
+    "build:all": "npm run build:dashboard && npm run build:kernel",
+    "build:dashboard": "cd dashboard/frontend && npm run build",
+    "build:kernel": "cd luna-kernel/luna-web && npm run build",
+    "start": "./start.sh",
+    "stop": "./stop.sh",
+    "health": "./health-check.sh"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jhin1v9/nexo-digital.git"
+  },
+  "author": "NEXO DIGITAL S.L.",
+  "license": "UNLICENSED"
+}

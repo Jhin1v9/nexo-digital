@@ -9,12 +9,42 @@
  */
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 
-// ── Base Paths ──
+// ── Detect Monorepo vs Traditional Setup ──
+function findMonorepoRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 5; i++) {
+    const pkgJson = path.join(dir, 'package.json');
+    if (fs.existsSync(pkgJson)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+        if (pkg.workspaces && Array.isArray(pkg.workspaces)) {
+          return dir;
+        }
+      } catch (e) {}
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+const MONOREPO_ROOT = findMonorepoRoot(__dirname);
 const HOME_DIR = os.homedir();
-const LUNA_KERNEL_DIR = path.join(HOME_DIR, '.luna-kernel');
+
+let LUNA_KERNEL_DIR, NEXO_DIR;
+if (MONOREPO_ROOT) {
+  LUNA_KERNEL_DIR = path.join(MONOREPO_ROOT, 'luna-kernel');
+  NEXO_DIR = path.join(MONOREPO_ROOT, 'dashboard');
+} else {
+  LUNA_KERNEL_DIR = path.join(HOME_DIR, '.luna-kernel');
+  NEXO_DIR = path.join(HOME_DIR, 'NEXO_DASHBOARD_PRO');
+}
+
+// Runtime data always stays in ~/.luna (outside repo)
 const LUNA_DIR = path.join(HOME_DIR, '.luna');
-const NEXO_DIR = path.join(HOME_DIR, 'NEXO_DASHBOARD_PRO');
 
 // ── Ports ──
 const PORTS = {

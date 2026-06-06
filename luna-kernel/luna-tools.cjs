@@ -90,7 +90,7 @@ function safeExec(cmd, opts = {}) {
     const output = execSync(cmd, {
       encoding: 'utf8',
       cwd: opts.cwd || process.cwd(),
-      timeout: opts.timeout || 30000,
+      timeout: opts.timeout || 0, // v8.5-fix: no default timeout
       maxBuffer: opts.maxBuffer || 1024 * 1024,
       stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -523,7 +523,7 @@ function searchFiles(pattern, opts = {}) {
     } else {
       cmd = `grep -rn --color=never -C ${opts.context || opts['-C'] || 2} --exclude-dir={node_modules,.git,dist,build,coverage,venv,.venv,__pycache__} --exclude={*.lock,*.log,*.min.*} ${JSON.stringify(pattern)} ${JSON.stringify(cwd)}`;
     }
-    const result = safeExec(cmd, { timeout: opts.timeout || 30000 });
+    const result = safeExec(cmd, { timeout: opts.timeout || 0 }); // v8.5-fix: no default timeout
     if (!result.success) {
       if (result.exitCode === 1) return ok({ pattern, matches: 0, results: [] });
       return err(result.error || result.stderr);
@@ -554,7 +554,7 @@ function grep(pattern, opts = {}) {
     } else {
       cmd = `grep -rn --color=never ${includeGlob} -C ${opts['-C'] || opts.context || 2} --exclude-dir={node_modules,.git,dist,build} ${JSON.stringify(pattern)} ${JSON.stringify(cwd)}`;
     }
-    const result = safeExec(cmd, { timeout: opts.timeout || 30000 });
+    const result = safeExec(cmd, { timeout: opts.timeout || 0 }); // v8.5-fix: no default timeout
     if (!result.success) {
       if (result.exitCode === 1) return ok({ pattern, matches: 0, results: [] });
       return err(result.error || result.stderr);
@@ -969,7 +969,7 @@ function downloadFile(url, destination, opts = {}) {
   return new Promise((resolve) => {
     const client = url.startsWith('https:') ? https : http;
     const file = fs.createWriteStream(dst);
-    const req = client.get(url, { timeout: opts.timeout || 30000 }, (res) => {
+    const req = client.get(url, { timeout: opts.timeout || 0 }, (res) => { // v8.5-fix: no default timeout
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         file.close();
         return downloadFile(res.headers.location, destination, opts).then(resolve);
@@ -1131,7 +1131,7 @@ function openDebugTerminal(params = {}) {
 // 11. DASHBOARD TOOLS (API REST localhost:3456)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DASHBOARD_BASE = 'http://localhost:3456/api';
+const DASHBOARD_BASE = `http://localhost:${process.env.DASHBOARD_PORT || 3456}/api`;
 function getInternalApiToken() {
   return process.env.INTERNAL_API_TOKEN || '';
 }

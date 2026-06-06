@@ -33,6 +33,7 @@
   let pendingToolCount = 0; // v9.3-fix: Track only CURRENT turn's tools, not full history
   let runningToolTimers = new Map(); // v9.4-fix: toolId -> { intervalId, startTime } for real-time execution timer
   const progressBuffers = new Map(); // v9.5: tool -> { chunks[], raf } for rAF batching of action_progress
+  let toolInstanceMap = new Map(); // backend toolInstanceId -> frontend message id
 
   // v8.2-fix: User explicitly disabled inactivity timeout — he waits for long operations.
   // The timer is cleared but NEVER restarted, so SSE never aborts due to silence.
@@ -66,9 +67,8 @@
 
     // v9.0-fix: Strip tool blocks using the same logic as AssistantMessage
     let cleanText = stripToolBlocksFromBuffer(text);
-    // Also check if the cleaned text is essentially empty (only JSON artifacts, punctuation, etc.)
-    const meaningfulContent = cleanText.replace(/[\s\{\}\[\]\(\)\,\.\;\:\"\'\`\|\\\/\-\+\=\*\&\%\$\#\@\!\?\<\>\~\^]/g, '').trim();
-    if (!cleanText || !cleanText.trim() || meaningfulContent.length === 0) {
+    // v8.5-fix: removed aggressive meaningfulContent check that discarded short replies
+    if (!cleanText || !cleanText.trim()) {
       if (forceText !== null) responseBuffer = '';
       return;
     }
@@ -95,6 +95,11 @@
     }
 
     flushedContentHashes.add(contentHash);
+    // v8.5-fix: Eviction when Set grows too large
+    if (flushedContentHashes.size > 1000) {
+      const iter = flushedContentHashes.values();
+      flushedContentHashes.delete(iter.next().value);
+    }
 
     if (!currentAssistantId) {
       currentAssistantId = 'resp-' + Date.now();
@@ -130,7 +135,11 @@
   }
 
   // v9.2-fix: Detect incomplete JSON blocks to prevent leaking raw tool JSON
+  // v8.5-fix: Only block if it looks like a Luna tool wrapper
   function hasIncompleteJsonBlock(text) {
+    if (!text) return false;
+    const hasToolMarker = text.includes('"tool"') || text.includes('"params"');
+    if (!hasToolMarker) return false;
     let depth = 0;
     let inString = false;
     let escape = false;
@@ -227,19 +236,27 @@
     result = result.replace(/"response"\s*:\s*"[^"]*"\s*\}?/gi, '');
     result = result.replace(/"tool"\s*:\s*"[^"]*"\s*,?/gi, '');
 
+    // v9.5-fix: Remove inline JSON fragments that leaked through (e.g. tool params snippets)
+    // Matches things like: "params": {"command": "..."} or "params": {"path": "..."}
+    result = result.replace(/"params"\s*:\s*\{[^{}]*"(?:command|path|script|code|query)"[^{}]*\}/gi, '');
+    // Matches trailing JSON fragments like: teShell", "params": {...}
+    result = result.replace(/\w*"\s*,\s*"params"\s*:\s*\{[^{}]*\}/gi, '');
+    // Matches stray tool name fragments
+    result = result.replace(/"tool"\s*:\s*"[^"]*"\s*,?\s*"?\w*"?\s*[:\{\}]?/gi, '');
+
     result = result.replace(/\n{3,}/g, '\n\n');
     return result.trim();
   }
 
   // v9.5: rAF-batched progress chunk flushing — prevents UI freeze on fast streams
-  function flushProgressBuffer(tool) {
-    const buf = progressBuffers.get(tool);
+  // v8.5-fix: Use toolMsgId instead of tool name to avoid collision between same-type tools
+  function flushProgressBuffer(toolMsgId) {
+    const buf = progressBuffers.get(toolMsgId);
     if (!buf || buf.chunks.length === 0) return;
     const batch = buf.chunks.splice(0);
     buf.raf = null;
     messages.update(msgs => {
-      const tMsgs = msgs.filter(m => m.type === 'tool' && m.tool === tool && !m.result);
-      const lastT = tMsgs[tMsgs.length - 1];
+      const lastT = msgs.find(m => m.id === toolMsgId && m.type === 'tool');
       if (lastT) {
         return msgs.map(m =>
           m.id === lastT.id
@@ -250,15 +267,15 @@
       return msgs;
     });
   }
-  function queueProgressChunk(tool, chunk) {
-    let buf = progressBuffers.get(tool);
+  function queueProgressChunk(toolMsgId, chunk) {
+    let buf = progressBuffers.get(toolMsgId);
     if (!buf) {
       buf = { chunks: [], raf: null };
-      progressBuffers.set(tool, buf);
+      progressBuffers.set(toolMsgId, buf);
     }
     buf.chunks.push(chunk);
     if (!buf.raf) {
-      buf.raf = requestAnimationFrame(() => flushProgressBuffer(tool));
+      buf.raf = requestAnimationFrame(() => flushProgressBuffer(toolMsgId));
     }
   }
 
@@ -268,12 +285,12 @@
     // in the hash makes deduplication useless — duplicates have different ids.
     // For tool events, include params so two action_start's with different params
     // don't get incorrectly deduplicated.
-    const type = event.type || '';
-    const text = event.text || event.content || event.fullResponse || '';
+    const type = event.type || 'unknown';
     const tool = event.tool || '';
     const paramsKey = event.params ? JSON.stringify(event.params).slice(0, 50) : '';
-    // Use first 100 chars of text + type + tool + params to create a simple hash
-    const raw = `${type}:${tool}:${paramsKey}:${text.slice(0, 100)}`;
+    const text = event.text || event.content || event.fullResponse || '';
+    // v8.5-fix: include currentMessageId to prevent collision across different messages
+    const raw = `${currentMessageId || ''}:${type}:${tool}:${paramsKey}:${text.slice(0, 100)}`;
     let hash = 0;
     for (let i = 0; i < raw.length; i++) {
       const char = raw.charCodeAt(i);
@@ -286,6 +303,11 @@
   function handleEvent(event) {
     if (!event) return;
     if (event.sessionId && event.sessionId !== sessionId) return;
+
+    // v8.5-fix: Ignore fallback polling events while actively streaming
+    if (event.source === 'fallback' && $isStreaming) {
+      return;
+    }
 
     // v6.1-fix: If the event has a messageId that doesn't match the current message,
     // it's a stale event from a previous message — ignore it.
@@ -313,7 +335,10 @@
     // to prevent deduplication of legit sequential tool calls of the same type.
     let dedupKey;
     if (event.type === 'action_start' || event.type === 'action_end' || event.type === 'action_progress') {
-      dedupKey = `tool:${event.type}:${event.tool || ''}:${event.id || ''}:${Date.now()}`;
+      // v10.0-fix: Remove Date.now() from dedupKey — it prevented deduplication entirely,
+      // causing pendingToolCount to get stuck > 0 forever. The backend already generates
+      // unique ids per event, so tool+id is sufficient.
+      dedupKey = `tool:${event.type}:${event.tool || ''}:${event.id || ''}`;
     } else {
       dedupKey = getEventHash(event);
     }
@@ -432,11 +457,39 @@
         mascotMessage.set(event.tool ? `Usando ${event.tool}...` : 'Trabalhando...');
         pendingToolCount++; // v9.3-fix
         const toolId = 'tool-' + Date.now();
+        const backendToolId = event.toolInstanceId || event.id || ('tool-' + Date.now());
+        toolInstanceMap.set(backendToolId, toolId);
         toolStartTimes.set(event.tool, Date.now());
+
+        // v9.5-fix: Close the current assistant bubble before showing the tool card.
+        // This ensures the NEXT assistant response starts as a NEW message below the tool,
+        // instead of being appended to the previous assistant message.
+        // Also remove the last assistant message if it only contains leaked tool JSON or is empty.
+        messages.update(msgs => {
+          if (msgs.length === 0) return msgs;
+          const lastIdx = msgs.length - 1;
+          const lastMsg = msgs[lastIdx];
+          if (lastMsg && lastMsg.type === 'assistant') {
+            const content = lastMsg.content || '';
+            const stripped = stripToolBlocksFromBuffer(content);
+            const hasToolJson = /"tool"\s*:/.test(content) || /"params"\s*:\s*\{/.test(content) || /"command"\s*:/.test(content);
+            // Remove if it's raw JSON, empty after stripping, or very short (likely just a tool call)
+            if (hasToolJson || !content.trim() || !stripped.trim() || stripped.trim().length < 10) {
+              console.log('[action_start] Removing leaked/empty assistant message before tool card');
+              return msgs.slice(0, -1);
+            }
+          }
+          return msgs;
+        });
+        // CRITICAL: Reset assistant tracking so the next response becomes a NEW message
+        currentAssistantId = null;
+        responseBuffer = '';
+
         messages.update(msgs => [...msgs, {
           id: toolId,
           type: 'tool',
           tool: event.tool,
+          backendToolId,
           params: event.params || {},
           result: null,
           duration: 0,
@@ -463,14 +516,29 @@
       }
       case 'action_progress': {
         if (!event.chunk) break;
-        queueProgressChunk(event.tool, event.chunk);
+        const targetToolId = toolInstanceMap.get(event.toolInstanceId || event.id);
+        if (targetToolId) {
+          queueProgressChunk(targetToolId, event.chunk);
+        } else {
+          queueProgressChunk(event.tool, event.chunk);
+        }
         break;
       }
       case 'action_end': {
         playSound('toolComplete');
         // v9.4-fix: Stop real-time timer and get accurate duration
-        const toolMsgs = get(messages).filter(m => m.type === 'tool' && m.tool === event.tool && !m.result);
-        const lastTool = toolMsgs[toolMsgs.length - 1];
+        // v8.5-fix: Use toolInstanceMap to match by backend toolInstanceId
+        const msgs = get(messages);
+        const targetToolId = toolInstanceMap.get(event.toolInstanceId || event.id);
+        let lastTool = targetToolId ? msgs.find(m => m.id === targetToolId) : null;
+        if (lastTool) {
+          toolInstanceMap.delete(event.toolInstanceId || event.id);
+        }
+        // Fallback to old behavior if not found
+        if (!lastTool) {
+          const toolMsgs = msgs.filter(m => m.type === 'tool' && m.tool === event.tool && !m.result);
+          lastTool = toolMsgs[toolMsgs.length - 1];
+        }
         let duration = 0;
         if (lastTool) {
           const timerInfo = runningToolTimers.get(lastTool.id);
@@ -485,8 +553,8 @@
         }
         toolStartTimes.delete(event.tool);
         // v9.5: Flush any pending progress buffer immediately so final output is complete
-        flushProgressBuffer(event.tool);
-        progressBuffers.delete(event.tool);
+        flushProgressBuffer(lastTool ? lastTool.id : event.tool);
+        progressBuffers.delete(lastTool ? lastTool.id : event.tool);
         const isSuccess = event.result?.success !== false;
         messages.update(msgs => {
           const tMsgs = msgs.filter(m => m.type === 'tool' && m.tool === event.tool && !m.result);
@@ -546,6 +614,14 @@
         thinkingId = null;
         const finalResponse = event.result?.response || event.response || event.text;
         console.log('[done] finalResponse length:', finalResponse?.length, 'content:', finalResponse?.substring(0, 100));
+
+        // v8.5-fix: prevent duplicate final message if response_done already handled it
+        const msgs = get(messages);
+        const alreadyHasDone = msgs.some(m => m.messageId === (event.messageId || currentMessageId) && m.type === 'done');
+        if (alreadyHasDone) {
+          console.log('[DEBUG-LUNA] Skipping duplicate done event');
+          break;
+        }
         
         // v9.3-fix: Only flush if we haven't already rendered this response.
         // response_done already flushes and resets currentAssistantId —
@@ -561,11 +637,20 @@
         }
         
         // v9.3-fix: Use pendingToolCount (current turn only) instead of scanning full history
+        // v8.5-fix: safety timeout for stuck tools
+        const toolStuckTimeout = 300000; // 5 min
         if (pendingToolCount > 0) {
-          console.log('[done] Tools ainda em execução — mantendo isStreaming=true até action_end chegar');
-          mascotState.set('working');
-          mascotMessage.set('Finalizando tools...');
-        } else {
+          const stuckTool = Array.from(toolStartTimes.values()).some(startTime => (Date.now() - startTime) > toolStuckTimeout);
+          if (stuckTool) {
+            console.warn('[done] Tools stuck for >5min — forcing pendingToolCount = 0');
+            pendingToolCount = 0;
+          } else {
+            console.log('[done] Tools ainda em execução — mantendo isStreaming=true até action_end chegar');
+            mascotState.set('working');
+            mascotMessage.set('Finalizando tools...');
+          }
+        }
+        if (pendingToolCount <= 0) {
           isStreaming.set(false);
           mascotState.set('idle');
           mascotMessage.set('O que mais posso fazer?');
@@ -725,6 +810,7 @@
 
     currentAssistantId = null;
     thinkingId = null;
+    responseBuffer = ''; // v9.5-fix: Clear buffer on session switch/reconnect
     processedEventIds.clear(); // v4.2: Clear dedup set on reconnect
     sseManager.disconnect();
     sseManager = new SSEManager();
@@ -871,8 +957,10 @@
     }
 
     // v3.6-fix: Reset assistant tracking before sending new message
+    // v9.5-fix: Also reset responseBuffer to prevent new responses from appending to old ones
     currentAssistantId = null;
     thinkingId = null;
+    responseBuffer = '';
 
     // v4.0-fix: Remove all previous thinking bubbles when sending a new message
     messages.update(msgs => removeAllThinking(msgs));
@@ -1166,6 +1254,10 @@
   }
 
   onDestroy(() => {
+    for (const { intervalId } of runningToolTimers.values()) {
+      clearInterval(intervalId);
+    }
+    runningToolTimers.clear();
     sseManager.disconnect();
     stopHeartbeat();
     mascotState.set('sleep');
@@ -1184,6 +1276,7 @@
     on:openConfig
     on:newChat
     on:editTitle
+    on:goHome={() => currentSessionId.set(null)}
   />
 
   <MessagesList

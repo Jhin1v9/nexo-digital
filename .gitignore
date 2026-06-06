@@ -1,5 +1,6 @@
 # ============================================
 # NEXO DIGITAL — Global .gitignore
+# Dashboard PRO + Luna Kernel v5.0
 # ============================================
 
 # === Node.js / npm ===
@@ -45,6 +46,9 @@ Thumbs.db
 # === Logs ===
 logs/
 *.log
+*.pid
+*.pid.lock
+*.seed
 
 # === OS Files ===
 .DS_Store
@@ -62,30 +66,42 @@ Desktop.ini
 *.backup
 *.old
 *.orig
-
-# === Luna-specific ===
-.luna-runtime.json
-cookies/*.json
-kimi-cookies.json
-luna-screenshot-*.png
-backup-luna-web-*/
 *.BAK
 *.bak.*
 
-# === Dashboard-specific ===
+# === Luna Kernel ===
+.luna-runtime.json
+cookies/
+cookies/*
+kimi-cookies.json
+luna-screenshot-*.png
+backup-luna-web-*/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# === Dashboard ===
 backend/data/*.db
 backend/data/*.sqlite
 backend/data/*.sqlite3
 frontend/.env
+agents/.env
 
 # === Test / Coverage ===
 coverage/
 .nyc_output/
 *.lcov
+test-results/
+__tests__/
+
+# === Python Virtual Envs ===
+venv/
+venv-*/
+.venv/
+*.pyc
+__pycache__/
 
 # === Misc ===
-*.pid
-*.seed
-*.pid.lock
 .lock-wscript
 .node_repl_history
+playwright/.cache/
+.playwright-mcp/

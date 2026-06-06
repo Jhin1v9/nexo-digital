@@ -1,106 +1,159 @@
-# 🌙 NEXO DIGITAL — Backup Completo
+# 🌙 NEXO DIGITAL — Dashboard PRO + Luna Kernel v5.0
 
-> **Repositório de backup unificado** da NEXO DIGITAL S.L.
-> Contém: **NEXO Dashboard Pro** + **Luna Kernel** (incluindo Luna Web + Telegram)
-
----
-
-## 📁 Estrutura do Repositório
-
-```
-nexo-digital-backup/
-├── README.md                 ← Você está aqui
-├── .gitignore               ← Regras globais de ignore
-├── .agents/                 ← Configurações de agentes IA
-│   ├── GLOBAL.md            ← Contexto geral dos 2 projetos
-│   ├── DASHBOARD.md         ← Contexto do Dashboard
-│   └── LUNA.md              ← Contexto da Luna (tools, arquitetura)
-│
-├── dashboard/               ← NEXO Dashboard Pro (cópia funcional)
-│   ├── backend/             ← Node.js API + serviços
-│   ├── frontend/            ← React SPA
-│   ├── agents/              ← Agentes IA do dashboard
-│   └── ...
-│
-└── luna-kernel/             ← Luna AI Kernel (cópia funcional)
-    ├── luna-web/            ← Interface web Svelte
-    ├── luna-extension/      ← Extensão Chrome
-    ├── config/              ← Configurações
-    ├── cookies/             ← Cookies Kimi (não versionados)
-    ├── plans/               ← Planos de projeto
-    └── *.cjs / *.js         ← Core engine, bridge, tools, soul
-```
+> **Sistema empresarial completo** com gestão financeira, CRM, projetos, votações e agente de IA autônomo.
 
 ---
 
-## 🏢 Sobre a NEXO DIGITAL
+## 📋 O que está incluído
 
-| Campo | Valor |
-|-------|-------|
-| **Empresa** | NEXO DIGITAL S.L. |
-| **CEO** | Abner Gabriel |
-| **Localização** | Barcelona, Espanha |
-| **Time** | 3 fundadores |
-| **Projetos** | Dashboard Pro + Luna AI |
-
----
-
-## 🚀 Projetos
-
-### 1. NEXO Dashboard Pro
-Sistema de gestão empresarial completo:
-- **Financeiro**: Caixa, despesas, pagamentos, orçamentos
-- **CRM**: Leads, clientes, pipeline de vendas
-- **Projetos**: Tarefas, links, colaboração
-- **Comunicação**: Email, WhatsApp integrado
-- **Agentes IA**: Automação inteligente
-
-**Stack**: React + Node.js + PostgreSQL + Supabase
-
-### 2. Luna AI Kernel
-Agente de IA autônomo executando no PC local:
-- **Luna Web**: Interface chat Svelte com dashboard integrado
-- **Luna Extension**: Extensão Chrome para interceptação Kimi
-- **Core Engine**: Bridge Kimi, tools, executor, soul
-- **Telegram**: Bot adapter para notificações
-
-**Stack**: Node.js + Svelte + Chrome Extension APIs
+| Módulo | Descrição | Tecnologia |
+|--------|-----------|------------|
+| **Dashboard PRO** | Gestão empresarial completa | React 18 + Vite + Express |
+| **Luna Kernel v5.0** | Agente de IA autônomo | Node.js + Svelte + Playwright |
+| **Luna Web** | Interface chat web | Svelte 4 + Tailwind |
+| **Luna Extension** | Extensão Chrome para interceptação | Manifest V3 |
+| **Telegram Bot** | Notificações e interação via chat | node-telegram-bot-api |
 
 ---
 
-## ⚡ Como Restaurar
+## 🚀 Instalação Rápida (3 comandos)
 
 ```bash
-# 1. Clone o repo
 git clone https://github.com/Jhin1v9/nexo-digital.git
+cd nexo-digital
+./install.sh
+```
 
-# 2. Dashboard
-cd nexo-digital/dashboard
-npm install
-npm run dev
+O instalador irá:
+1. Verificar pré-requisitos (Node 20+, PostgreSQL, Chrome)
+2. Instalar dependências de todos os módulos
+3. Buildar frontends
+4. Guiar na configuração do `.env`
+5. Aplicar migrations do banco de dados
 
-# 3. Luna Kernel
-cd ../luna-kernel
-npm install
-npm start
+---
+
+## 📦 Pré-requisitos
+
+- **Node.js** v20+ (com npm v10+)
+- **Git**
+- **PostgreSQL** 15+ (local ou Neon/Supabase)
+- **Google Chrome** / Chromium (para Luna Bridge)
+- **PM2** (opcional, recomendado para produção)
+- **Caddy** (opcional, para HTTPS local)
+
+### Instalação automática de dependências
+
+O `./install.sh` detecta o que falta e mostra os comandos exatos para instalar.
+
+---
+
+## 🎮 Comandos
+
+| Comando | Descrição |
+|---------|-----------|
+| `./install.sh` | Instalação completa interativa |
+| `./start.sh` | Inicia todos os serviços |
+| `./stop.sh` | Para todos os serviços |
+| `./health-check.sh` | Verifica saúde do sistema |
+| `npm run build:all` | Builda todos os frontends |
+| `./dashboard/luna-nexo.sh start` | Inicia via PM2 (recomendado) |
+| `./dashboard/luna-nexo.sh stop` | Para via PM2 |
+| `./dashboard/luna-nexo.sh status` | Status dos serviços PM2 |
+
+---
+
+## 🌐 URLs de Acesso
+
+Após iniciar:
+
+| Serviço | URL Padrão |
+|---------|------------|
+| Dashboard | http://localhost:3456 |
+| Luna Web | http://localhost:3458 |
+| Luna Vite Dev | http://localhost:5173 (modo dev) |
+
+Com Caddy configurado:
+- https://localhost (Dashboard)
+- https://localhost/luna-web/ (Luna Web)
+
+---
+
+## ⚙️ Configuração
+
+O arquivo `.env` é criado automaticamente pelo `install.sh` a partir do `.env.template`.
+
+### Variáveis obrigatórias
+
+- `DATABASE_URL` — PostgreSQL
+- `JWT_SECRET` — Mínimo 64 caracteres
+- `TELEGRAM_BOT_TOKEN` — De @BotFather
+- `TELEGRAM_GROUP_CHAT_ID` — ID do grupo de notificações
+- `INTERNAL_API_TOKEN` — Token de comunicação interna
+- `SMTP_USER` / `SMTP_PASS` — Email para notificações
+
+Veja o guia completo em [`docs/ENV-GUIDE.md`](docs/ENV-GUIDE.md).
+
+---
+
+## 🏗️ Estrutura do Monorepo
+
+```
+nexo-digital/
+├── install.sh              ← Instalador universal
+├── start.sh / stop.sh      ← Controle de serviços
+├── health-check.sh         ← Verificação de saúde
+├── .env.template           ← Template de configuração
+│
+├── dashboard/              ← NEXO Dashboard PRO
+│   ├── frontend/           ← React + Vite
+│   ├── backend/            ← Express + PostgreSQL
+│   ├── backend/migrations/ ← SQL migrations
+│   └── agents/             ← Agentes e bots
+│
+├── luna-kernel/            ← Luna Kernel v5.0
+│   ├── luna-web/           ← Svelte frontend
+│   ├── luna-extension/     ← Extensão Chrome
+│   ├── luna-soul.cjs       ← Orquestrador principal
+│   ├── kimi-bridge.cjs     ← Bridge Playwright CDP
+│   └── config/             ← Configurações centralizadas
+│
+├── shared/                 ← Configs compartilhadas
+│   └── caddy/              ← Caddyfile
+│
+└── docs/                   ← Documentação
+    ├── ENV-GUIDE.md
+    └── TROUBLESHOOTING.md
 ```
 
 ---
 
 ## 🔒 Segurança
 
-- **NUNCA** commite arquivos `.env`, credenciais ou cookies
-- O `.gitignore` já bloqueia: `node_modules/`, `dist/`, `cookies/`, `*.env`
-- Tokens e secrets devem ser reconfigurados manualmente após clone
+- **NUNCA** commite o arquivo `.env`
+- O `.gitignore` já bloqueia secrets, cookies, logs e builds
+- Tokens e credenciais são configurados localmente após clone
+- O `JWT_SECRET` é gerado automaticamente se vazio
 
 ---
 
-## 📅 Último Backup
+## 🐛 Resolução de Problemas
 
-**Data**: 2026-06-05
-**Versão**: Beta funcional
-**Status**: ✅ Completo
+Veja [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) para:
+- Portas em uso
+- PostgreSQL não conecta
+- Build falhando
+- PM2 processos travados
+- Extensão Chrome não carrega
 
 ---
 
-*Criado por Luna 🌙 — Agente de IA da NEXO DIGITAL*
+## 📞 Suporte
+
+- **Telegram**: @lunanexobot
+- **Empresa**: NEXO DIGITAL S.L.
+- **Localização**: Barcelona, Espanha
+
+---
+
+*Criado por NEXO DIGITAL S.L. 🌙*

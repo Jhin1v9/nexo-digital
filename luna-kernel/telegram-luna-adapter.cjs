@@ -107,7 +107,8 @@ class TelegramLunaAdapter {
     }
 
     try {
-      const response = await fetch('http://localhost:3456/api/voting/telegram-vote', {
+      const DASHBOARD_PORT = process.env.DASHBOARD_PORT || 3456;
+      const response = await fetch(`http://localhost:${DASHBOARD_PORT}/api/voting/telegram-vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, voter, vote: voteValue, secret: process.env.TELEGRAM_BOT_TOKEN })
