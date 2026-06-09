@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "description": "IPs confiáveis — não disparam alertas de segurança",
+  "updatedAt": "2026-06-06T21:00:34.643Z",
+  "trusted": {
+    "abner": {
+      "name": "Abner Gabriel",
+      "role": "CEO",
+      "ips": [],
+      "autoCapture": true,
+      "notes": ""
+    },
+    "nonoke": {
+      "name": "Enoque (Nonoke)",
+      "role": "CEO",
+      "ips": [],
+      "autoCapture": true,
+      "notes": ""
+    },
+    "elias": {
+      "name": "Elias",
+      "role": "CEO",
+      "ips": [],
+      "autoCapture": true,
+      "notes": ""
+    }
+  }
+}

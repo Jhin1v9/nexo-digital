@@ -27,5 +27,10 @@
     "url": "https://github.com/Jhin1v9/nexo-digital.git"
   },
   "author": "NEXO DIGITAL S.L.",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0"
+  }
 }

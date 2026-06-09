@@ -1,0 +1,30 @@
+{
+  "balance": {
+    "value": 0,
+    "currency": "EUR"
+  },
+  "lastUpdated": "2026-06-06T21:00:34.692Z",
+  "monthlyIncome": {
+    "value": 0,
+    "currency": "EUR"
+  },
+  "monthlyExpenses": {
+    "value": 0,
+    "currency": "EUR"
+  },
+  "projectedBalance": {
+    "value": 0,
+    "currency": "EUR"
+  },
+  "projectionMonths": 3,
+  "incomingPayments": [],
+  "outgoingExpenses": [],
+  "history": [],
+  "alerts": [],
+  "settings": {
+    "lowBalanceMultiplier": 2,
+    "currency": "EUR",
+    "autoDeductRecurring": true,
+    "projectionMonths": 3
+  }
+}

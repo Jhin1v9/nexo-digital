@@ -1,0 +1,269 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: #08080c;
+    color: #e0e0e0;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgba(15, 15, 22, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .glass-card {
+    background: rgba(15, 15, 22, 0.8);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+  }
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg bg-nexo-info text-white font-medium transition-all;
+  }
+  .btn-primary:hover {
+    @apply opacity-90;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-nexo-muted transition-all cursor-pointer;
+  }
+  .nav-item:hover, .nav-item.active {
+    @apply bg-nexo-card text-white;
+  }
+
+  /* Landing page styles */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #a78bfa 0%, #22d3ee 50%, #34d399 100%);
+  }
+  .gradient-text-purple-cyan {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #7c3aed 0%, #22d3ee 100%);
+  }
+  .glow-violet {
+    box-shadow: 0 0 60px -15px rgba(124, 58, 237, 0.4), 0 0 100px -30px rgba(34, 211, 238, 0.2);
+  }
+  .glow-button {
+    box-shadow: 0 0 30px -5px rgba(124, 58, 237, 0.5), 0 0 60px -15px rgba(34, 211, 238, 0.3);
+  }
+  .card-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+  .card-hover:hover {
+    @apply -translate-y-1 border-violet-500/40;
+    box-shadow: 0 20px 40px -15px rgba(124, 58, 237, 0.2), 0 0 30px -10px rgba(34, 211, 238, 0.1);
+  }
+  .mesh-gradient {
+    background: 
+      radial-gradient(ellipse at 20% 30%, rgba(124, 58, 237, 0.25) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(34, 211, 238, 0.15) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 50%),
+      linear-gradient(180deg, #0a0a0f 0%, #0f0f18 50%, #0a0a0f 100%);
+  }
+}
+
+@layer utilities {
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Selection */
+::selection {
+  background: rgba(124, 58, 237, 0.4);
+  color: white;
+}
+
+/* Landing page animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 30px -5px rgba(124, 58, 237, 0.5), 0 0 60px -15px rgba(34, 211, 238, 0.3); }
+  50% { box-shadow: 0 0 40px -5px rgba(124, 58, 237, 0.7), 0 0 80px -15px rgba(34, 211, 238, 0.5); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #08080c;
+}
+::-webkit-scrollbar-thumb {
+  background: #1a1a2e;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2a3e;
+}
+
+/* Custom scrollbar para viewers/editores */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #2a2a3e;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #3a3a4e;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* highlight.js overrides para tema escuro */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+
+/* ═════════════════════════════════════════════════════════════════════════════
+   PRINT / PDF — Estilos para impressão do Changelog e outras páginas
+   Tema escuro preservado (mesmas cores do site). Sem limite de páginas.
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+@media print {
+  /* Esconde elementos de navegação e UI */
+  nav,
+  aside,
+  header[class*="fixed"],
+  .fixed,
+  .luna-floating-button,
+  [class*="FloatingButton"],
+  button.print\:hidden,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Preserva o tema escuro do site — sem inverter cores */
+  body {
+    background: #08080c !important;
+    color: #e0e0e0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Remove scrollbars */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Container principal ocupa largura total */
+  main,
+  .max-w-4xl,
+  [class*="max-w-"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Cards do changelog — mantêm fundo escuro e bordas do tema */
+  .bg-nexo-card,
+  [class*="bg-nexo-card"] {
+    background: #0f1117 !important;
+    border: 1px solid #1a1a2e !important;
+    box-shadow: none !important;
+    margin-bottom: 12px !important;
+  }
+
+  /* Mantém cores originais dos textos */
+  h1, h2, h3,
+  [class*="text-nexo-text"] {
+    color: #e2e8f0 !important;
+  }
+
+  [class*="text-nexo-text-secondary"],
+  [class*="text-sm"],
+  p {
+    color: #94a3b8 !important;
+  }
+
+  /* Badges mantêm aparência original */
+  [class*="bg-red-500/20"],
+  [class*="bg-yellow-500/20"],
+  [class*="bg-blue-500/20"] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Tags mantêm aparência original */
+  [class*="bg-white/5"] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Ícones coloridos — mantêm cor */
+  [class*="rounded-xl flex items-center justify-center shadow-lg"] {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Indicador de não-lido some na impressão */
+  [class*="bg-nexo-accent rounded-full shadow-lg"] {
+    display: none !important;
+  }
+
+  /* CRITICAL: Permite que o conteúdo flua por várias páginas
+     O App.jsx usa h-screen + overflow-hidden no root e overflow-y-auto no <main>;
+     sem isso o navegador só imprime a viewport visível (1 página) */
+  .h-screen,
+  [class*="h-screen"] {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  main,
+  [class*="overflow-y-auto"] {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Header de impressão */
+  @page {
+    margin: 15mm;
+  }
+
+  /* Stats cards no topo — mantêm tema escuro */
+  .grid[class*="grid-cols-3"] > div {
+    background: #0f1117 !important;
+    border: 1px solid #1a1a2e !important;
+  }
+}

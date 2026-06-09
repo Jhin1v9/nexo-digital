@@ -844,9 +844,6 @@ class KimiBridge {
       log.info('[DEBUG-LUNA] Global state cleared after browser disconnect');
     });
 
-    // Start idle cleanup timer
-    this._startIdleCleanup();
-
     // Start cookie backup timer (save every 5 minutes)
     this._startCookieBackup();
 
@@ -1074,10 +1071,18 @@ class KimiBridge {
       page._lunaUserId = userId; // for cookie re-sync in _verifySession
 
       // Register crash listener
-      page.on('crash', () => {
-        log.error(`Page crashed for user ${hashUserId(userId)}`);
+      page.on('crash', async () => {
+        log.error(`[CRASH] Page crashed for user ${hashUserId(userId)}`);
         this.userSessions.delete(userId);
         this.semaphore.release();
+        // v8.8-fix: Auto-recover session after crash
+        try {
+          log.info(`[CRASH-RECOVERY] Auto-recovering session for user ${hashUserId(userId)}`);
+          await this.recoverSession(userId);
+          log.info(`[CRASH-RECOVERY] Session recovered successfully for user ${hashUserId(userId)}`);
+        } catch (e) {
+          log.error(`[CRASH-RECOVERY] Failed to recover session for user ${hashUserId(userId)}: ${e.message}`);
+        }
       });
 
       // v7.5: No JavaScript injection into page. Network interception is handled
@@ -3619,6 +3624,93 @@ class KimiBridge {
   /**
    * Start idle cleanup timer — closes inactive pages (skips persistent users)
    */
+  _startHealthCheck() {
+    if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
+    this.healthCheckTimer = setInterval(async () => {
+      try {
+        // Check if browser is connected
+        if (!this.browser || !this.browser.isConnected()) {
+          log.warn('[HEALTH-CHECK] Browser disconnected, auto-restarting...');
+          await this.checkChrome();
+          log.info('[HEALTH-CHECK] Browser restarted successfully');
+          return;
+        }
+        // Check if pages are alive
+        for (const [userId, session] of this.userSessions) {
+          if (session.page && session.page.isClosed()) {
+            log.warn(`[HEALTH-CHECK] Page closed for user ${hashUserId(userId)}, recovering...`);
+            try {
+              await this.recoverSession(userId);
+              log.info(`[HEALTH-CHECK] Session recovered for user ${hashUserId(userId)}`);
+            } catch (e) {
+              log.error(`[HEALTH-CHECK] Failed to recover session for user ${hashUserId(userId)}: ${e.message}`);
+            }
+          }
+        }
+      } catch (e) {
+        log.error(`[HEALTH-CHECK] Error: ${e.message}`);
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
+  _startHealthCheck() {
+    if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
+    this.healthCheckTimer = setInterval(async () => {
+      try {
+        // Check if browser is connected
+        if (!this.browser || !this.browser.isConnected()) {
+          log.warn('[HEALTH-CHECK] Browser disconnected, auto-restarting...');
+          await this.checkChrome();
+          log.info('[HEALTH-CHECK] Browser restarted successfully');
+          return;
+        }
+        // Check if pages are alive
+        for (const [userId, session] of this.userSessions) {
+          if (session.page && session.page.isClosed()) {
+            log.warn(`[HEALTH-CHECK] Page closed for user ${hashUserId(userId)}, recovering...`);
+            try {
+              await this.recoverSession(userId);
+              log.info(`[HEALTH-CHECK] Session recovered for user ${hashUserId(userId)}`);
+            } catch (e) {
+              log.error(`[HEALTH-CHECK] Failed to recover session for user ${hashUserId(userId)}: ${e.message}`);
+            }
+          }
+        }
+      } catch (e) {
+        log.error(`[HEALTH-CHECK] Error: ${e.message}`);
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
+  _startHealthCheck() {
+    if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
+    this.healthCheckTimer = setInterval(async () => {
+      try {
+        // Check if browser is connected
+        if (!this.browser || !this.browser.isConnected()) {
+          log.warn('[HEALTH-CHECK] Browser disconnected, auto-restarting...');
+          await this.checkChrome();
+          log.info('[HEALTH-CHECK] Browser restarted successfully');
+          return;
+        }
+        // Check if pages are alive
+        for (const [userId, session] of this.userSessions) {
+          if (session.page && session.page.isClosed()) {
+            log.warn(`[HEALTH-CHECK] Page closed for user ${hashUserId(userId)}, recovering...`);
+            try {
+              await this.recoverSession(userId);
+              log.info(`[HEALTH-CHECK] Session recovered for user ${hashUserId(userId)}`);
+            } catch (e) {
+              log.error(`[HEALTH-CHECK] Failed to recover session for user ${hashUserId(userId)}: ${e.message}`);
+            }
+          }
+        }
+      } catch (e) {
+        log.error(`[HEALTH-CHECK] Error: ${e.message}`);
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
   _startIdleCleanup() {
     if (this.idleTimer) clearInterval(this.idleTimer);
     this.idleTimer = setInterval(() => {

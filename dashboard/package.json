@@ -1,0 +1,31 @@
+{
+  "name": "nexo-dashboard-pro",
+  "version": "16.0.0",
+  "description": "NEXO Dashboard PRO — ERP interno da NEXO Digital",
+  "scripts": {
+    "build": "npm install && cd backend && npm install && cd .. && cd frontend && npm install --legacy-peer-deps && npm run build && rm -rf ../backend/public && cp -r dist ../backend/public",
+    "start": "cd backend && npm install && cd .. && ln -sf backend/node_modules node_modules && cd backend && node server.js",
+    "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
+    "brain:sync": "node scripts/brain-sync.js",
+    "brain:sync:principal": "node scripts/brain-sync.js",
+    "test:e2e": "npx playwright test --config=e2e/playwright.config.js",
+    "test:e2e:ui": "npx playwright test --config=e2e/playwright.config.js --ui",
+    "test:e2e:headed": "npx playwright test --config=e2e/playwright.config.js --headed",
+    "test:e2e:debug": "npx playwright test --config=e2e/playwright.config.js --debug",
+    "test:e2e:report": "npx playwright show-report e2e/playwright-report"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "node-telegram-bot-api": "^0.67.0",
+    "turndown": "^7.2.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "concurrently": "^9.2.1"
+  }
+}
