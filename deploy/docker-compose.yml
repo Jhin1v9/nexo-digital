@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: nexodb
+    volumes:
+      - nexo-pg-data:/var/lib/postgresql/data
+      - ${VPS_PROJECT_DIR}/dashboard/backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexo -d nexodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexo-network
+
+  dashboard:
+    build:
+      context: ${VPS_PROJECT_DIR}
+      dockerfile: deploy/Dockerfile
+      args:
+        JWT_SECRET: ${JWT_SECRET}
+    container_name: nexo-dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ${VPS_PROJECT_DIR}/.env
+    environment:
+      DATABASE_URL: postgresql://nexo:${POSTGRES_PASSWORD}@postgres:5432/nexodb
+      PORT: 3456
+      LUNA_PORT: 3458
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3456:3456"
+      - "127.0.0.1:3458:3458"
+    volumes:
+      - nexo-logs:/app/logs
+      - nexo-data:/app/dashboard/backend/data
+    networks:
+      - nexo-network
+
+volumes:
+  nexo-pg-data:
+  nexo-logs:
+  nexo-data:
+
+networks:
+  nexo-network:
+    driver: bridge
