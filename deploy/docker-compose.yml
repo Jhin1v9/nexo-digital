@@ -35,12 +35,12 @@ services:
       - ${VPS_PROJECT_DIR}/.env
     environment:
       DATABASE_URL: postgresql://nexo:${POSTGRES_PASSWORD}@postgres:5432/nexodb
-      PORT: 3456
-      LUNA_PORT: 3458
+      PORT: 3501
+      LUNA_PORT: 3601
       NODE_ENV: production
     ports:
-      - "127.0.0.1:3456:3456"
-      - "127.0.0.1:3458:3458"
+      - "127.0.0.1:3501:3501"
+      - "127.0.0.1:3601:3601"
     volumes:
       - nexo-logs:/app/logs
       - nexo-data:/app/dashboard/backend/data

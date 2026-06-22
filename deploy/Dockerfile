@@ -4,6 +4,9 @@ WORKDIR /app
 
 ARG JWT_SECRET
 
+# Copiar package.json raiz para que luna-config detecte o monorepo
+COPY package.json ./
+
 # Instalar dependências do sistema necessárias para bcrypt, pg-native e playwright
 RUN apk add --no-cache \
     python3 \
@@ -19,7 +22,8 @@ RUN apk add --no-cache \
 
 # Copiar backend e instalar dependências
 COPY dashboard/backend/package.json ./dashboard/backend/
-RUN cd dashboard/backend && npm install
+RUN cd dashboard/backend && npm install && \
+    ln -sf /app/dashboard/backend/node_modules /app/node_modules
 
 # Copiar frontend buildado para pasta public do backend
 COPY dashboard/frontend/dist ./dashboard/backend/public
@@ -39,6 +43,9 @@ COPY dashboard/backend/*.cjs ./dashboard/backend/
 COPY dashboard/backend/*.js ./dashboard/backend/
 COPY dashboard/backend/tsconfig.json ./dashboard/backend/
 
+# Copiar agentes usados pelo backend (require '../agents/...')
+COPY dashboard/agents ./dashboard/agents
+
 # Copiar configuração do Luna Kernel (tudo, pois extensões/routes podem depender)
 COPY luna-kernel ./luna-kernel
 
@@ -56,14 +63,14 @@ RUN mkdir -p /app/dashboard/backend/data && \
 # Copiar supervisord config
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Instalar supervisor
-RUN apk add --no-cache supervisor
+# Instalar supervisor e garantir diretório de logs
+RUN apk add --no-cache supervisor && mkdir -p /var/log/supervisor /app/logs
 
-EXPOSE 3456 3458
+EXPOSE 3501 3601
 
 ENV NODE_ENV=production
-ENV PORT=3456
-ENV LUNA_PORT=3458
+ENV PORT=3501
+ENV LUNA_PORT=3601
 ENV BIND_IP=0.0.0.0
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
